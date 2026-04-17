@@ -2,6 +2,9 @@ import XCTest
 @testable import rebase_ios
 
 final class APIClientTests: XCTestCase {
+
+    // MARK: - Helpers
+
     private final class InMemoryTokenStore: TokenStore {
         var accessToken: String?
         var refreshToken: String?
@@ -26,35 +29,70 @@ final class APIClientTests: XCTestCase {
         let value: String
     }
 
+    private func makeSession() -> URLSession {
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [MockURLProtocol.self]
+        return URLSession(configuration: config)
+    }
+
+    private func wrapped<T: Encodable>(_ payload: T, isError: Bool = false, message: String = "ok") throws -> Data {
+        struct Wrapper<T: Encodable>: Encodable {
+            let isError: Bool
+            let message: String
+            let data: T
+        }
+        return try JSONEncoder().encode(Wrapper(isError: isError, message: message, data: payload))
+    }
+
     override func tearDown() {
         super.tearDown()
         MockURLProtocol.requestHandler = nil
     }
 
-    func testSendDecodesPayload() async throws {
-        let config = URLSessionConfiguration.ephemeral
-        config.protocolClasses = [MockURLProtocol.self]
-        let session = URLSession(configuration: config)
+    // MARK: - Tests
 
+    func testSendDecodesWrappedPayload() async throws {
         MockURLProtocol.requestHandler = { request in
             XCTAssertEqual(request.url?.path, "/test")
             let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
-            let data = try JSONEncoder().encode(SamplePayload(value: "ok"))
+            let data = try self.wrapped(SamplePayload(value: "ok"))
             return (response, data)
         }
 
-        let tokenStore = InMemoryTokenStore(accessToken: "token", refreshToken: "refresh")
-        let client = APIClient(baseURL: URL(string: "http://localhost:8080")!, tokenStore: tokenStore, urlSession: session)
+        let client = APIClient(
+            baseURL: URL(string: "http://localhost:9000")!,
+            tokenStore: InMemoryTokenStore(accessToken: "token", refreshToken: "refresh"),
+            urlSession: makeSession()
+        )
 
-        let response: SamplePayload = try await client.send(APIRequest(path: "/test"))
-        XCTAssertEqual(response, SamplePayload(value: "ok"))
+        let result: SamplePayload = try await client.send(APIRequest(path: "/test"))
+        XCTAssertEqual(result, SamplePayload(value: "ok"))
+    }
+
+    func testIsErrorTrueThrowsServerError() async throws {
+        MockURLProtocol.requestHandler = { request in
+            let response = HTTPURLResponse(url: request.url!, statusCode: 400, httpVersion: nil, headerFields: nil)!
+            struct ErrPayload: Encodable { let message: String; let details: String?; let timestamp: String? }
+            let data = try self.wrapped(ErrPayload(message: "Bad input", details: nil, timestamp: nil), isError: true, message: "error")
+            return (response, data)
+        }
+
+        let client = APIClient(
+            baseURL: URL(string: "http://localhost:9000")!,
+            tokenStore: InMemoryTokenStore(accessToken: "token", refreshToken: "refresh"),
+            urlSession: makeSession()
+        )
+
+        do {
+            let _: SamplePayload = try await client.send(APIRequest(path: "/bad", requiresAuth: false))
+            XCTFail("Expected error")
+        } catch APIError.server(let code, let msg) {
+            XCTAssertEqual(code, 400)
+            XCTAssertEqual(msg, "Bad input")
+        }
     }
 
     func test401TriggersRefreshAndRetry() async throws {
-        let config = URLSessionConfiguration.ephemeral
-        config.protocolClasses = [MockURLProtocol.self]
-        let session = URLSession(configuration: config)
-
         var primaryCallCount = 0
 
         MockURLProtocol.requestHandler = { request in
@@ -62,9 +100,9 @@ final class APIClientTests: XCTestCase {
 
             if path == "/api/v1/auth/refresh" {
                 let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
-                let data = try JSONEncoder().encode(
-                    APIEnvelope(data: TokenPair(accessToken: "new-access", refreshToken: "new-refresh"))
-                )
+                let authResp = AuthResponse(accessToken: "new-access", refreshToken: "new-refresh",
+                                            tokenType: "Bearer", expiresIn: 3600)
+                let data = try self.wrapped(authResp)
                 return (response, data)
             }
 
@@ -74,10 +112,9 @@ final class APIClientTests: XCTestCase {
                     let response = HTTPURLResponse(url: request.url!, statusCode: 401, httpVersion: nil, headerFields: nil)!
                     return (response, Data())
                 }
-
                 XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer new-access")
                 let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
-                let data = try JSONEncoder().encode(SamplePayload(value: "retried"))
+                let data = try self.wrapped(SamplePayload(value: "retried"))
                 return (response, data)
             }
 
@@ -86,12 +123,38 @@ final class APIClientTests: XCTestCase {
         }
 
         let tokenStore = InMemoryTokenStore(accessToken: "expired", refreshToken: "refresh")
-        let client = APIClient(baseURL: URL(string: "http://localhost:8080")!, tokenStore: tokenStore, urlSession: session)
+        let client = APIClient(
+            baseURL: URL(string: "http://localhost:9000")!,
+            tokenStore: tokenStore,
+            urlSession: makeSession()
+        )
 
-        let response: SamplePayload = try await client.send(APIRequest(path: "/protected"))
+        let result: SamplePayload = try await client.send(APIRequest(path: "/protected"))
 
-        XCTAssertEqual(response, SamplePayload(value: "retried"))
+        XCTAssertEqual(result, SamplePayload(value: "retried"))
         XCTAssertEqual(tokenStore.accessToken, "new-access")
         XCTAssertEqual(tokenStore.refreshToken, "new-refresh")
+    }
+
+    func testFailedRefreshClearsSession() async throws {
+        MockURLProtocol.requestHandler = { request in
+            let response = HTTPURLResponse(url: request.url!, statusCode: 401, httpVersion: nil, headerFields: nil)!
+            return (response, Data())
+        }
+
+        let tokenStore = InMemoryTokenStore(accessToken: "expired", refreshToken: "bad-refresh")
+        let client = APIClient(
+            baseURL: URL(string: "http://localhost:9000")!,
+            tokenStore: tokenStore,
+            urlSession: makeSession()
+        )
+
+        do {
+            let _: SamplePayload = try await client.send(APIRequest(path: "/protected"))
+            XCTFail("Expected unauthorized error")
+        } catch APIError.unauthorized {
+            XCTAssertNil(tokenStore.accessToken)
+            XCTAssertNil(tokenStore.refreshToken)
+        }
     }
 }
