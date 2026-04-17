@@ -1,99 +1,96 @@
 import Foundation
 
 enum APIEndpoints {
-    static func login(username: String, password: String) -> APIRequest<APIEnvelope<TokenPair>> {
-        struct Body: Codable {
-            let username: String
-            let password: String
-        }
-
-        return APIRequest(
+    static func login(username: String, password: String) -> APIRequest<AuthResponse> {
+        APIRequest(
             path: "/api/v1/auth/login",
             method: .post,
-            body: AnyEncodable(Body(username: username, password: password)),
+            body: AnyEncodable(LoginRequest(username: username, password: password)),
             requiresAuth: false
         )
     }
 
-    static func signup(username: String, email: String, password: String) -> APIRequest<EmptyResponse> {
-        struct Body: Codable {
-            let username: String
-            let email: String
-            let password: String
-        }
-
-        return APIRequest(
+    static func register(username: String, email: String, password: String) -> APIRequest<EmptyResponse> {
+        APIRequest(
             path: "/api/v1/auth/register",
             method: .post,
-            body: AnyEncodable(Body(username: username, email: email, password: password)),
+            body: AnyEncodable(RegisterRequest(username: username, email: email, password: password)),
             requiresAuth: false
         )
     }
 
-    static func me() -> APIRequest<APIEnvelope<User>> {
+    static func refresh(refreshToken: String) -> APIRequest<AuthResponse> {
+        APIRequest(
+            path: "/api/v1/auth/refresh",
+            method: .post,
+            body: AnyEncodable(RefreshTokenRequest(refreshToken: refreshToken)),
+            requiresAuth: false
+        )
+    }
+
+    static func me() -> APIRequest<User> {
         APIRequest(path: "/api/v1/auth/me")
+    }
+
+    static func profile(userID: String) -> APIRequest<User> {
+        APIRequest(path: "/api/v1/profiles/\(userID)")
     }
 
     static func logout() -> APIRequest<EmptyResponse> {
         APIRequest(path: "/api/v1/auth/logout", method: .post)
     }
 
-    static func fetchFeed() -> APIRequest<[CommitPost]> {
-        APIRequest(path: "/commits")
+    static func fetchFeed(page: Int = 0, size: Int = 20) -> APIRequest<PageResponse<CommitPost>> {
+        var req = APIRequest<PageResponse<CommitPost>>(path: "/api/v1/posts")
+        req.queryItems = [
+            URLQueryItem(name: "page", value: "\(page)"),
+            URLQueryItem(name: "size", value: "\(size)")
+        ]
+        return req
     }
 
-    static func fetchProfile() -> APIRequest<User> {
-        APIRequest(path: "/users/me")
+    static func createPost(
+        content: String,
+        codeSnippet: String? = nil,
+        language: String? = nil,
+        imageData: Data? = nil
+    ) throws -> APIRequest<CommitPost> {
+        let requestPart = CreatePostRequest(content: content, codeSnippet: codeSnippet, language: language)
+        let encoder = JSONEncoder()
+        encoder.keyEncodingStrategy = .convertToSnakeCase
+        let jsonData = try encoder.encode(requestPart)
+
+        let builder = MultipartFormDataBuilder()
+        let multipartData = builder.build(requestJSON: jsonData, imageData: imageData)
+
+        var req = APIRequest<CommitPost>(path: "/api/v1/posts", method: .post)
+        req.requestBody = .multipart(data: multipartData, contentType: builder.contentType)
+        return req
     }
 
-    static func fetchRecentCommits() -> APIRequest<[CommitPost]> {
-        APIRequest(path: "/users/me/commits")
-    }
-
-    static func toggleLGTM(postID: String) -> APIRequest<EmptyResponse> {
-        APIRequest(path: "/commits/\(postID)/lgtm", method: .post)
-    }
-
-    static func fetchComments(postID: String) -> APIRequest<[CommentModel]> {
-        APIRequest(path: "/commits/\(postID)/comments")
+    static func fetchComments(postID: String, page: Int = 0, size: Int = 20) -> APIRequest<PageResponse<CommentModel>> {
+        var req = APIRequest<PageResponse<CommentModel>>(path: "/api/v1/posts/\(postID)/comments")
+        req.queryItems = [
+            URLQueryItem(name: "page", value: "\(page)"),
+            URLQueryItem(name: "size", value: "\(size)")
+        ]
+        return req
     }
 
     static func createComment(postID: String, text: String) -> APIRequest<CommentModel> {
-        struct Body: Codable {
-            let text: String
-        }
-
+        struct Body: Encodable { let content: String }
         return APIRequest(
-            path: "/commits/\(postID)/comments",
+            path: "/api/v1/posts/\(postID)/comments",
             method: .post,
-            body: AnyEncodable(Body(text: text))
+            body: AnyEncodable(Body(content: text))
         )
     }
 
-    static func requestPresignedUpload(fileName: String, mimeType: String) -> APIRequest<PresignedUploadResponse> {
-        struct Body: Codable {
-            let fileName: String
-            let mimeType: String
-        }
-
-        return APIRequest(
-            path: "/uploads/presigned-url",
-            method: .post,
-            body: AnyEncodable(Body(fileName: fileName, mimeType: mimeType))
-        )
+    static func toggleLGTM(postID: String) -> APIRequest<LGTMResponse> {
+        APIRequest(path: "/api/v1/posts/\(postID)/lgtm", method: .post)
     }
 
-    static func createCommit(message: String, imageURL: URL?, codeSnippet: CodeSnippet?) -> APIRequest<CommitPost> {
-        struct Body: Codable {
-            let message: String
-            let imageURL: URL?
-            let codeSnippet: CodeSnippet?
-        }
-
-        return APIRequest(
-            path: "/commits",
-            method: .post,
-            body: AnyEncodable(Body(message: message, imageURL: imageURL, codeSnippet: codeSnippet))
-        )
+    static func signup(username: String, email: String, password: String) -> APIRequest<EmptyResponse> {
+        register(username: username, email: email, password: password)
     }
 }

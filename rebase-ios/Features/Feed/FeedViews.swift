@@ -5,18 +5,21 @@ struct FeedView: View {
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                LazyVStack(spacing: 12) {
-                    ForEach(viewModel.posts) { post in
-                        CommitCardView(
-                            post: post,
-                            onLGTM: { viewModel.optimisticToggleLGTM(post: post) },
-                            onComments: { viewModel.selectedPostForComments = post }
-                        )
-                    }
+            Group {
+                if viewModel.isLoading && viewModel.posts.isEmpty {
+                    ProgressView()
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else if let errorMessage = viewModel.errorMessage, viewModel.posts.isEmpty {
+                    ContentUnavailableView(
+                        errorMessage,
+                        systemImage: "exclamationmark.triangle",
+                        description: Text("Pull down to retry.")
+                    )
+                } else if viewModel.posts.isEmpty {
+                    ContentUnavailableView("No posts yet", systemImage: "tray")
+                } else {
+                    feedList
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 10)
             }
             .background(Color.ghBackground)
             .navigationTitle("Rebase")
@@ -39,15 +42,46 @@ struct FeedView: View {
                 await viewModel.refresh()
             }
             .sheet(item: $viewModel.selectedPostForComments) { post in
-                CommentsSheetView(viewModel: CommentsViewModel(apiClient: viewModel.apiClient, post: post))
+                CommentsSheetView(
+                    viewModel: CommentsViewModel(
+                        apiClient: viewModel.apiClient,
+                        post: post,
+                        onCommentAdded: { viewModel.incrementCommentCount(for: post.id) }
+                    )
+                )
                     .presentationDetents([.medium, .large])
             }
             .sheet(isPresented: $viewModel.showComposer) {
-                ComposeCommitView(viewModel: ComposeCommitViewModel(apiClient: viewModel.apiClient)) { newPost in
+                ComposeCommitView(
+                    viewModel: ComposeCommitViewModel(apiClient: viewModel.apiClient),
+                    showsCancel: true
+                ) { newPost in
                     viewModel.prepend(post: newPost)
                 }
                 .presentationDetents([.medium, .large])
             }
+        }
+    }
+
+    private var feedList: some View {
+        ScrollView {
+            LazyVStack(spacing: 12) {
+                ForEach(viewModel.posts) { post in
+                    CommitCardView(
+                        post: post,
+                        onLGTM: { viewModel.optimisticToggleLGTM(post: post) },
+                        onComments: { viewModel.selectedPostForComments = post }
+                    )
+                }
+
+                if viewModel.hasMore {
+                    ProgressView()
+                        .padding()
+                        .task { await viewModel.loadMore() }
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
         }
     }
 }
@@ -72,16 +106,16 @@ private struct CommitCardView: View {
                 }
 
                 Spacer()
-                Image(systemName: "git.commit")
+                Image(systemName: "arrow.triangle.branch")
                     .foregroundStyle(Color.ghSecondaryText)
             }
 
-            Text(post.message)
+            Text(post.content)
                 .font(.system(size: 15, weight: .regular))
                 .foregroundStyle(Color.ghPrimaryText)
                 .fixedSize(horizontal: false, vertical: true)
 
-            if let snippet = post.codeSnippet {
+            if let snippet = post.snippet {
                 CodeSnippetView(snippet: snippet)
             }
 
@@ -131,10 +165,7 @@ private struct CommitCardView: View {
                 Spacer()
             }
         }
-        .padding(12)
-        .background(
-            RoundedRectangle(cornerRadius: 14)
-                .fill(Color.ghCard)
-        )
+        .padding(14)
+        .background(RoundedRectangle(cornerRadius: 14).fill(Color.ghCard))
     }
 }

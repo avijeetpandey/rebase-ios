@@ -6,39 +6,20 @@ struct ProfileView: View {
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    if let user = viewModel.user {
-                        HStack(alignment: .top, spacing: 14) {
-                            AvatarView(url: user.avatarURL, size: 74)
-                            VStack(alignment: .leading, spacing: 6) {
-                                Text(user.username)
-                                    .font(.system(size: 22, weight: .bold))
-                                    .foregroundStyle(Color.ghPrimaryText)
-
-                                if let bio = user.bio, !bio.isEmpty {
-                                    Text(bio)
-                                        .font(.system(size: 14))
-                                        .foregroundStyle(Color.ghSecondaryText)
-                                }
-                            }
-                            Spacer(minLength: 0)
-                        }
-                        .padding(14)
-                        .background(RoundedRectangle(cornerRadius: 14).fill(Color.ghCard))
-                    }
-
-                    Text("Recent Commits")
-                        .font(.system(size: 16, weight: .bold))
-                        .foregroundStyle(Color.ghPrimaryText)
-
-                    LazyVStack(spacing: 10) {
-                        ForEach(viewModel.commits) { post in
-                            ReusableCommitCard(post: post)
-                        }
-                    }
+            Group {
+                if viewModel.isLoading && viewModel.user == nil {
+                    ProgressView()
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else if let errorMessage = viewModel.errorMessage, viewModel.user == nil {
+                    ContentUnavailableView(
+                        errorMessage,
+                        systemImage: "person.slash",
+                        description: Text("Pull down to retry.")
+                    )
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    profileContent
                 }
-                .padding(12)
             }
             .background(Color.ghBackground)
             .navigationTitle("Profile")
@@ -51,6 +32,59 @@ struct ProfileView: View {
             .task {
                 await viewModel.load()
             }
+            .refreshable {
+                await viewModel.load()
+            }
+        }
+    }
+
+    private var profileContent: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                if let user = viewModel.user {
+                    HStack(alignment: .top, spacing: 14) {
+                        AvatarView(url: user.avatarURL, size: 74)
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text(user.username)
+                                .font(.system(size: 22, weight: .bold))
+                                .foregroundStyle(Color.ghPrimaryText)
+
+                            if let bio = user.bio, !bio.isEmpty {
+                                Text(bio)
+                                    .font(.system(size: 14))
+                                    .foregroundStyle(Color.ghSecondaryText)
+                            }
+                        }
+                        Spacer(minLength: 0)
+                    }
+                    .padding(14)
+                    .background(RoundedRectangle(cornerRadius: 14).fill(Color.ghCard))
+                }
+
+                if let errorMessage = viewModel.errorMessage {
+                    Text(errorMessage)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(Color.red.opacity(0.9))
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(12)
+                        .background(RoundedRectangle(cornerRadius: 10).fill(Color.ghCard))
+                }
+
+                Text("Recent Commits")
+                    .font(.system(size: 16, weight: .bold))
+                    .foregroundStyle(Color.ghPrimaryText)
+
+                if viewModel.commits.isEmpty && !viewModel.isLoading {
+                    ContentUnavailableView("No commits yet", systemImage: "tray")
+                } else {
+                    LazyVStack(spacing: 10) {
+                        ForEach(viewModel.commits) { post in
+                            ReusableCommitCard(post: post)
+                        }
+                    }
+                }
+            }
+            .padding(12)
         }
     }
 }
@@ -60,7 +94,7 @@ private struct ReusableCommitCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(post.message)
+            Text(post.content)
                 .font(.system(size: 14, weight: .medium))
                 .foregroundStyle(Color.ghPrimaryText)
             Text(post.createdAt.relativeTimestamp)

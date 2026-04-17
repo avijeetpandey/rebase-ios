@@ -4,6 +4,7 @@ import SwiftUI
 struct ComposeCommitView: View {
     @Environment(\.dismiss) private var dismiss
     @StateObject var viewModel: ComposeCommitViewModel
+    let showsCancel: Bool
     let onCreated: (CommitPost) -> Void
     @State private var pickerItem: PhotosPickerItem?
     @State private var previewImage: UIImage?
@@ -82,9 +83,11 @@ struct ComposeCommitView: View {
             }
             .background(Color.ghBackground)
             .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button("Cancel") { dismiss() }
-                        .foregroundStyle(Color.ghSecondaryText)
+                if showsCancel {
+                    ToolbarItem(placement: .topBarLeading) {
+                        Button("Cancel") { dismiss() }
+                            .foregroundStyle(Color.ghSecondaryText)
+                    }
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
@@ -92,7 +95,9 @@ struct ComposeCommitView: View {
                             do {
                                 let post = try await viewModel.submit()
                                 onCreated(post)
-                                dismiss()
+                                if showsCancel {
+                                    dismiss()
+                                }
                             } catch {
                                 viewModel.errorMessage =
                                     (error as? LocalizedError)?.errorDescription ?? "Unable to publish commit."

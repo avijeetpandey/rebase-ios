@@ -1,4 +1,7 @@
 import Foundation
+import OSLog
+
+private let authLogger = Logger(subsystem: "com.rebase.rebase-ios", category: "Auth")
 
 @MainActor
 final class AuthViewModel: ObservableObject {
@@ -50,23 +53,30 @@ final class AuthViewModel: ObservableObject {
             let tokens: TokenPair
             switch mode {
             case .login:
-                let loginEnvelope: APIEnvelope<TokenPair> = try await apiClient.send(
-                    APIEndpoints.login(username: username, password: password)
+                authLogger.debug("Login attempt for: \(self.username)")
+                let authResponse: AuthResponse = try await apiClient.send(
+                    APIEndpoints.login(username: self.username, password: password)
                 )
-                tokens = loginEnvelope.data
+                tokens = TokenPair(from: authResponse)
+
             case .signup:
-                _ = try await apiClient.send(APIEndpoints.signup(username: username, email: email, password: password)) as EmptyResponse
-                let loginEnvelope: APIEnvelope<TokenPair> = try await apiClient.send(
-                    APIEndpoints.login(username: username, password: password)
+                authLogger.debug("Register attempt for: \(self.username)")
+                _ = try await apiClient.send(
+                    APIEndpoints.register(username: self.username, email: self.email, password: self.password)
+                ) as EmptyResponse
+                let authResponse: AuthResponse = try await apiClient.send(
+                    APIEndpoints.login(username: self.username, password: self.password)
                 )
-                tokens = loginEnvelope.data
+                tokens = TokenPair(from: authResponse)
             }
 
             sessionStore.save(tokens: tokens)
 
-            let meEnvelope: APIEnvelope<User> = try await apiClient.send(APIEndpoints.me())
-            sessionStore.currentUser = meEnvelope.data
+            let user: User = try await apiClient.send(APIEndpoints.me())
+            sessionStore.currentUser = user
+            authLogger.info("Auth succeeded for: \(user.username)")
         } catch {
+            authLogger.error("Auth failed: \(error.localizedDescription)")
             errorMessage = (error as? LocalizedError)?.errorDescription ?? "Unable to authenticate."
         }
     }
