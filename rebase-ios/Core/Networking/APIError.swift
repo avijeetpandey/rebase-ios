@@ -17,6 +17,13 @@ enum APIError: LocalizedError, Equatable {
         case .unauthorized:
             return "Session expired. Please sign in again."
         case .server(let statusCode, let message):
+            if let message,
+               message.localizedCaseInsensitiveContains("maximum upload size exceeded") {
+                return "Image is too large. Please upload an image under 1 MB."
+            }
+            if statusCode == 413 {
+                return "Image is too large. Please upload an image under 1 MB."
+            }
             if let message, !message.isEmpty {
                 return "Server error (\(statusCode)): \(message)"
             }
